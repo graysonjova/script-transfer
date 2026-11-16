@@ -448,7 +448,92 @@ window.DiagramExport = (function () {
             return kind;
         }
 
-        function connector(a, b, kind) {
+        function outward(box, other) {
+            const dx = other.cx - box.cx;
+            const dy = other.cy - box.cy;
+            if (Math.abs(dx) > Math.abs(dy)) {
+                return dx >= 0
+                    ? { x: box.x + box.width, y: box.cy, nx: 1, ny: 0 }
+                    : { x: box.x, y: box.cy, nx: -1, ny: 0 };
+            }
+            return dy >= 0
+                ? { x: box.cx, y: box.y + box.height, nx: 0, ny: 1 }
+                : { x: box.cx, y: box.y, nx: 0, ny: -1 };
+        }
+
+        // Mermaid cardinality arrows follow the direction of the first and last
+        // segment. Those segments have to run straight out of the box, or the
+        // arrow is drawn beside the line.
+        function markerRoute(a, b) {
+            const start = outward(a, b);
+            const end = outward(b, a);
+            const gap = Math.hypot(end.x - start.x, end.y - start.y);
+            const stub = Math.max(18, Math.min(40, gap / 3 || 18));
+            const leave = {
+                x: start.x + start.nx * stub,
+                y: start.y + start.ny * stub
+            };
+            const approach = {
+                x: end.x + end.nx * stub,
+                y: end.y + end.ny * stub
+            };
+            let midD;
+            let midX;
+            let midY;
+            if (start.nx !== 0 && end.nx !== 0) {
+                const mid = (leave.x + approach.x) / 2;
+                midD = "L " + num(mid) + " " + num(leave.y)
+                    + " L " + num(mid) + " " + num(approach.y);
+                midX = mid;
+                midY = (leave.y + approach.y) / 2;
+            } else if (start.ny !== 0 && end.ny !== 0) {
+                const mid = (leave.y + approach.y) / 2;
+                midD = "L " + num(leave.x) + " " + num(mid)
+                    + " L " + num(approach.x) + " " + num(mid);
+                midX = (leave.x + approach.x) / 2;
+                midY = mid;
+            } else if (start.nx !== 0) {
+                midD = "L " + num(approach.x) + " " + num(leave.y);
+                midX = approach.x;
+                midY = leave.y;
+            } else {
+                midD = "L " + num(leave.x) + " " + num(approach.y);
+                midX = leave.x;
+                midY = approach.y;
+            }
+            return {
+                d: "M " + num(start.x) + " " + num(start.y)
+                    + " L " + num(leave.x) + " " + num(leave.y)
+                    + " " + midD
+                    + " L " + num(approach.x) + " " + num(approach.y)
+                    + " L " + num(end.x) + " " + num(end.y),
+                midX: midX,
+                midY: midY
+            };
+        }
+
+        function nudgeMarkers(path) {
+            ["marker-start", "marker-end", "marker-mid"].forEach(name => {
+                const value = path.getAttribute(name);
+                if (!value) {
+                    return;
+                }
+                path.removeAttribute(name);
+                path.setAttribute(name, value);
+            });
+        }
+
+        function connector(a, b, kind, path) {
+            if (
+                path &&
+                (
+                    path.getAttribute("marker-start") ||
+                    path.getAttribute("marker-end") ||
+                    path.getAttribute("marker-mid")
+                )
+            ) {
+                return markerRoute(a, b);
+            }
             if (Math.abs(a.cx - b.cx) < 1 && Math.abs(a.cy - b.cy) < 1) {
                 const x = a.x + a.width;
                 const y = a.cy;
@@ -594,8 +679,9 @@ window.DiagramExport = (function () {
                 if (!fromBox || !toBox) {
                     return;
                 }
-                const route = connector(fromBox, toBox, connectorKind(path));
+                const route = connector(fromBox, toBox, connectorKind(path), path);
                 path.setAttribute("d", route.d);
+                nudgeMarkers(path);
                 if (path.id) {
                     svg.querySelectorAll(
                         '.join-hit-area[data-hit-for="' + cssAttr(path.id) + '"]'
